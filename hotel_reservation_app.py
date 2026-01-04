@@ -924,101 +924,7 @@ class HotelSystem:
         suggestions.sort(key=lambda x: x['total_price'], reverse=True)
         return suggestions
 
-# ---------------------------
-# A* Planner for alternatives
-# ---------------------------
 
-class AStarPlanner:
-    def __init__(self, system: HotelSystem):
-        self.system = system
-
-    def suggest(self, desired_type: RoomType, ci: date, nights: int,
-                adults: int, children: int, services: List[str], celeb_code: str,
-                max_shift_days: int = 10, k: int = 3) -> List[Tuple[str, RoomType, date, int]]:
-        """
-        Returns list of (label, room_type, check_in, estimated_total_price)
-        A* state: (rtype, start_day_offset)
-        """
-        desired_idx = 0  # offset baseline
-        start_state = (desired_type, 0)
-
-        allowed_types: List[RoomType] = ["FAMILY4", "TRIPLE3", "CELEB_FLOOR"]
-
-        def is_valid(rtype: RoomType, offset: int) -> bool:
-            if abs(offset) > max_shift_days:
-                return False
-            d = ci + timedelta(days=offset)
-            co = d + timedelta(days=nights)
-            if not self.system._is_within_horizon(d, co):
-                return False
-            if rtype == "CELEB_FLOOR" and not self.system.validate_celeb_code(celeb_code):
-                return False
-            max_cap = 10 if rtype == "CELEB_FLOOR" else (4 if rtype == "FAMILY4" else 3)
-            if adults + children > max_cap:
-                return False
-            return True
-
-        def neighbors(state: Tuple[RoomType, int]) -> List[Tuple[Tuple[RoomType, int], float]]:
-            rtype, offset = state
-            out: List[Tuple[Tuple[RoomType, int], float]] = []
-            for step in (-1, 1):
-                ns = (rtype, offset + step)
-                if is_valid(ns[0], ns[1]):
-                    out.append((ns, 150.0))  # shifting dates has a penalty
-            # change room type
-            for rt in allowed_types:
-                if rt == rtype:
-                    continue
-                ns = (rt, offset)
-                if is_valid(ns[0], ns[1]):
-                    # penalty for switching room type
-                    out.append((ns, 600.0 if rt != desired_type else 0.0))
-            return out
-
-        def heuristic(state: Tuple[RoomType, int]) -> float:
-            # lower-bound: date shift penalty (not price)
-            _, offset = state
-            return abs(offset - desired_idx) * 120.0
-
-        # A* search
-        import heapq
-        g: Dict[Tuple[RoomType, int], float] = {start_state: 0.0}
-        came: Dict[Tuple[RoomType, int], Tuple[RoomType, int]] = {}
-        pq: List[Tuple[float, Tuple[RoomType, int]]] = []
-        heapq.heappush(pq, (heuristic(start_state), start_state))
-        visited: set[Tuple[RoomType, int]] = set()
-
-        found: List[Tuple[str, RoomType, date, int]] = []
-
-        while pq and len(found) < k:
-            _, cur = heapq.heappop(pq)
-            if cur in visited:
-                continue
-            visited.add(cur)
-            rtype, offset = cur
-            d = ci + timedelta(days=offset)
-            co = d + timedelta(days=nights)
-
-            # If available, produce a suggestion
-            avail = self.system.find_available_rooms(rtype, d, co)
-            if avail:
-                # compute cheapest estimate among avail
-                best_room = avail[0]
-                best_price = self.system.compute_price(best_room, d, co, adults, children, services)
-                label = f"{rtype} / {fmt_date(d)} ({offset:+} gün)"
-                found.append((label, rtype, d, best_price))
-                # keep searching for potentially better ones (but we stop at k)
-            # continue expanding
-            for nxt, cost in neighbors(cur):
-                ng = g[cur] + cost
-                if ng < g.get(nxt, float("inf")):
-                    g[nxt] = ng
-                    came[nxt] = cur
-                    heapq.heappush(pq, (ng + heuristic(nxt), nxt))
-
-        # sort found by estimated price then by shift
-        found = mergesort(found, key_fn=lambda x: (x[3], abs((x[2]-ci).days)))
-        return found[:k]
 
 
 
@@ -1372,72 +1278,7 @@ class PackageResultDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class AlternativeResultDialog(ctk.CTkToplevel):
-    def __init__(self, master, suggestions, on_apply_callback):
-        super().__init__(master)
-        self.title("Alternatif Öneriler")
-        self.geometry("600x450")
-        self.suggestions = suggestions # List of (Label, RoomType, Date, Price)
-        self.on_apply = on_apply_callback
-        
-        try:
-             x = master.winfo_rootx() + 40
-             y = master.winfo_rooty() + 40
-             self.geometry(f"+{x}+{y}")
-        except: pass
-        
-        self.transient(master)
-        self.grab_set()
 
-        # Header
-        head = ctk.CTkFrame(self, fg_color="transparent")
-        head.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(head, text="Size Özel Alternatifler", font=("Segoe UI", 16, "bold")).pack(side="left")
-        
-        ctk.CTkLabel(head, text="Tarih veya oda tipi değişikliği ile bulunan müsaitlikler.", 
-                    text_color="#AAAAAA", font=("Segoe UI", 11)).pack(side="left", padx=10)
-
-        # Scrollable Area
-        self.scroll = ctk.CTkScrollableFrame(self)
-        self.scroll.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        for idx, item in enumerate(suggestions):
-            self._build_card(idx, item)
-
-    def _build_card(self, idx, item):
-        # item: (label, rtype, ci, price)
-        label, rtype, ci, price = item
-        
-        card = ctk.CTkFrame(self.scroll, border_width=1, border_color="#555")
-        card.pack(fill="x", pady=6)
-        
-        # Grid layout inside card
-        card.columnconfigure(0, weight=1)
-        card.columnconfigure(1, weight=0)
-        
-        # Left Info
-        left = ctk.CTkFrame(card, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="nswe", padx=10, pady=5)
-        
-        # label example: "FAMILY4 / 2025-12-25 (+2 gün)"
-        parts = label.split(" / ")
-        date_info = parts[1] if len(parts) > 1 else str(ci)
-        
-        ctk.CTkLabel(left, text=f"{rtype}", font=("Segoe UI", 13, "bold"), anchor="w", text_color="#4CC2FF").pack(fill="x")
-        ctk.CTkLabel(left, text=f"Tarih: {date_info}", font=("Segoe UI", 12), anchor="w").pack(fill="x")
-
-        # Right Action
-        right = ctk.CTkFrame(card, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="nswe", padx=10, pady=5)
-        
-        ctk.CTkLabel(right, text=f"Tahmini: {price} TL", font=("Segoe UI", 12, "bold"), anchor="e").pack()
-        
-        ctk.CTkButton(right, text="Seç & Uygula", width=100, height=28,
-                      command=lambda: self._on_select(rtype, ci)).pack(pady=(5,0))
-
-    def _on_select(self, rtype, ci):
-        self.on_apply(rtype, ci)
-        self.destroy()
 
 
 
@@ -1445,7 +1286,7 @@ class ModernHotelApp(ctk.CTk):
     def __init__(self, system: HotelSystem):
         super().__init__()
         self.system = system
-        self.planner = AStarPlanner(system)
+
 
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
@@ -1733,8 +1574,7 @@ class ModernHotelApp(ctk.CTk):
         act.pack(fill="x", pady=20)
         ctk.CTkButton(act, text="Uygun Oda Ara", command=self.on_search).pack(side="left", padx=(0, 10))
         ctk.CTkButton(act, text="Rezervasyon Yap", command=self.on_book).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(act, text="Alternatif Öner (A*)", fg_color="transparent", border_width=1, 
-                      text_color=self.colors["text"], command=self.on_suggest).pack(side="left")
+
         ctk.CTkButton(act, text="Bütçe Sihirbazı (DP)", fg_color="#7C3AED", 
                       hover_color="#6D28D9", width=140,
                       command=self.on_knapsack_suggest).pack(side="left", padx=(10, 0))
@@ -2240,18 +2080,7 @@ class ModernHotelApp(ctk.CTk):
             {"Ekleme (Insert)": "O(log N)", "Arama (Search)": "O(log N)"}
         )
 
-        # 2. A* Algorithm
-        algo_card(scroll, "A* (A-Star) Yol Bulma", "Algoritma",
-            [
-                "Kullanım: 'Alternatif Öner' butonu (oda yoksa çalışır).",
-                "Amaç: Kullanıcının istediği tarihe/oda tipine en yakın alternatif odayı bulmak.",
-                "State: (Oda Tipi, Gün Kayması). Örn: (FAMILY4, +2 gün).",
-                "Neighbors: Tarihi ±1 gün kaydır VEYA oda tipini değiştir.",
-                "Heuristic (h): |gün_farkı| * ceza_katsayısı. (Kullanıcıya en yakın günü öne çeker).",
-                "Cost (g): Oda fiyatı değil, 'uygunsuzluk maliyeti'ni minimize eder."
-            ],
-            {"Karmaşıklık": "O(b^d) - heuristic ile optimize", "Sezgisel": "Manhattan (Zaman eksenli)"}
-        )
+
 
         # 3. Dynamic Programming
         algo_card(scroll, "Dinamik Programlama (Knapsack)", "Algoritma",
@@ -2500,42 +2329,7 @@ class ModernHotelApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Hata", str(e))
 
-    def on_suggest(self) -> None:
-        try:
-            guest, rtype, ci, nights, adults, children, services, code = self._get_inputs()
-            suggestions = self.planner.suggest(rtype, ci, nights, adults, children, services, code, max_shift_days=10, k=5)
-            
-            if not suggestions:
-                messagebox.showinfo("Alternatif", "Uygun alternatif bulunamadı (±10 gün).")
-                return
-            
-            # Show interactive dialog
-            AlternativeResultDialog(self, suggestions, self.apply_suggestion)
-            
-        except Exception as e:
-            messagebox.showerror("Hata", str(e))
 
-    def apply_suggestion(self, rtype: str, new_checkin: date) -> None:
-        """
-        Alternatif öneriyi uygular:
-        1. Tarihi güncelle
-        2. Oda tipini güncelle
-        3. Arama yap
-        4. (Opsiyonel) Odayı seç
-        """
-        # Formu güncelle
-        if hasattr(self, "checkin_var"):
-            self.checkin_var.set(fmt_date(new_checkin))
-        
-        if hasattr(self, "type_var"):
-            self.type_var.set(rtype)
-            
-        # Aramayı tetikle
-        self.refresh_price_preview() # Update estimates
-        self.on_search() # Find available rooms with new filters
-        
-        # Kullanıcıya bilgi
-        messagebox.showinfo("Uygulandı", f"Kriterler güncellendi:\n\nTarih: {fmt_date(new_checkin)}\nTip: {rtype}\n\nUygun odalar listelendi.")
 
 
     def on_cancel_selected(self) -> None:
