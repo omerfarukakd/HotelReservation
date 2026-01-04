@@ -1,0 +1,50 @@
+[
+  {
+    "service_id": "BREAKFAST",
+    "name": "Kahvaltı Paketi",
+    "pricing": {
+      "mode": "per_person_per_night",
+      "price": 250
+    }
+  },
+  {
+    "service_id": "AIRPORT",
+    "name": "Havalimanı Transfer",
+    "pricing": {
+      "mode": "flat",
+      "price": 1400
+    }
+  },
+  {
+    "service_id": "SPA",
+    "name": "Spa Günü",
+    "pricing": {
+      "mode": "per_person",
+      "price": 900
+    }
+  },
+  {
+    "service_id": "LATE",
+    "name": "Geç Çıkış",
+    "pricing": {
+      "mode": "flat",
+      "price": 500
+    }
+  },
+  {
+    "service_id": "EXTRABED",
+    "name": "Ek Yatak",
+    "pricing": {
+      "mode": "per_night",
+      "price": 350
+    }
+  },
+  {
+    "service_id": "SECURITY",
+    "name": "Özel Güvenlik (Ünlü Kat)",
+    "pricing": {
+      "mode": "per_night",
+      "price": 6000
+    }
+  }
+]
